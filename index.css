@@ -1,0 +1,42 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+*/
+
+body {
+  background-color: #f5f5f5;
+  color: #2a2a2a;
+}
+
+/* Animation for gentle fade-in of components */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out forwards;
+}
+
+/* Custom scrollbar for a more integrated look */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d1d5db; /* Light gray scrollbar */
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af; /* Darker gray on hover */
+}

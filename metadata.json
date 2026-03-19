@@ -1,0 +1,6 @@
+{
+  "name": "AI Interior Designer 3",
+  "description": "Upload a photo of your room, pick a style, and let AI redesign your space while preserving the room's structure, layout, and proportions.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
