@@ -1,6 +1,8 @@
 {
-  "name": "AI Interior Designer 3",
-  "description": "Upload a photo of your room, pick a style, and let AI redesign your space while preserving the room's structure, layout, and proportions.",
+  "name": "ANS Converter Pro",
+  "description": "A professional tool to convert raw assessment questions (PDF, Word, Text) into validated ANS-compatible CSV files with automated quality checks.",
   "requestFramePermissions": [],
-  "prompt": ""
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
