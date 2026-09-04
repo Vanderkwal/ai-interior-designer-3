@@ -1,95 +1,119 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
-*/
 
-import { GoogleGenAI, GenerateContentResponse, Modality } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
+import { ParsedQuestion, QuestionType } from "../types";
 
-const fileToPart = async (file: File) => {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = error => reject(error);
-    });
-    const { mimeType, data } = dataUrlToParts(dataUrl);
-    return { inlineData: { mimeType, data } };
-};
+const SYSTEM_INSTRUCTION = `
+ROL:
+Jij bent de Senior Data-Specialist voor ANS en Toetsdeskundige. Jouw enige doel is: Foutloze Conversie en Validatie naar een technisch perfecte ANS CSV (34 kolommen).
 
-const dataUrlToParts = (dataUrl: string) => {
-    const arr = dataUrl.split(',');
-    if (arr.length < 2) throw new Error("Invalid data URL");
-    const mimeMatch = arr[0].match(/:(.*?);/);
-    if (!mimeMatch || !mimeMatch[1]) throw new Error("Could not parse MIME type from data URL");
-    return { mimeType: mimeMatch[1], data: arr[1] };
-}
+TAAK 1: ANTI-TESTWISENESS & KWALITEIT
+1. Gelijke Lengte: Herschrijf de afleiders (distractors) zodat ze visueel en qua tekstlengte nagenoeg identiek zijn aan het juiste antwoord.
+2. DE-DUPLICATIE (CRUCIAAL): De tekst van het juiste antwoord mag NOOIT herhaald worden in de afleiders. Verwijder of verander dubbele keuzes onmiddellijk.
+3. Duidelijkheid: Gebruik eenduidige vraagstelling zonder dubbele negaties.
 
-const dataUrlToPart = (dataUrl: string) => {
-    const { mimeType, data } = dataUrlToParts(dataUrl);
-    return { inlineData: { mimeType, data } };
-}
+TAAK 2: SANITIZATION
+- Verwijder alle enters (\\n) in de tekst; gebruik <br> voor noodzakelijke witregels.
+- Vervang alle dubbele quotes (") door enkele quotes (').
+- Vervang alle puntkomma's (;) in de tekst door komma's (,).
 
-const handleApiResponse = (response: GenerateContentResponse): string => {
-    if (response.promptFeedback?.blockReason) {
-        const { blockReason, blockReasonMessage } = response.promptFeedback;
-        const errorMessage = `Request was blocked. Reason: ${blockReason}. ${blockReasonMessage || ''}`;
-        throw new Error(errorMessage);
+TAAK 3: TAGGING
+- ID: Nummer ze als 'Question 01', 'Question 02', etc.
+- Onderwerp: Bepaal een logische tag op basis van de inhoud.
+- Bloom: Kies uit [Onthouden, Begrijpen, Toepassen, Analyseren].
+- Moeilijkheid: Kies uit [Makkelijk, Gemiddeld, Moeilijk].
+
+TAAK 4: ABSOLUTE VOLLEDIGHEID EN INTEGRITEIT (CRUCIAAL)
+- Converteer ABSOLUUT ELKE ingevoerde vraag uit de tekst of het document. Sla NOOIT vragen over.
+- Als er 40 of 50 vragen zijn ingevoerd, moeten er EXACT 40 of 50 objecten in de resulterende JSON-array aanwezig zijn. Stop nooit halverwege de lijst.
+- Vat de invoer niet samen en maak geen willekeurige selectie of steekproef. Behandel elke vraag systematisch van de eerste tot de allerlaatste.
+
+OUTPUT:
+Return een JSON array van objecten. De AI moet de de-duplicatie check intern uitvoeren voordat het resultaat wordt gestuurd.
+`;
+
+export const convertContentToQuestions = async (
+  inputContent: string,
+  inputType: 'text' | 'base64',
+  mimeType: string = 'application/pdf'
+): Promise<ParsedQuestion[]> => {
+
+  const apiKey = process.env.API_KEY || import.meta.env?.VITE_GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Geen Gemini API Key gevonden. Controleer of je een .env.local bestand hebt aangemaakt met GEMINI_API_KEY.");
+  }
+
+  // Initialize Gemini with required telemetry User-Agent
+  const ai = new GoogleGenAI({
+    apiKey: apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
     }
+  });
 
-    // Find the first image part in any candidate
-    for (const candidate of response.candidates ?? []) {
-        const imagePart = candidate.content?.parts?.find(part => part.inlineData);
-        if (imagePart?.inlineData) {
-            const { mimeType, data } = imagePart.inlineData;
-            return `data:${mimeType};base64,${data}`;
+  const model = 'gemini-3.5-flash';
+
+  let contents: any;
+
+  if (inputType === 'text') {
+    contents = inputContent;
+  } else {
+    contents = {
+      parts: [
+        {
+          inlineData: {
+            mimeType: mimeType,
+            data: inputContent
+          }
+        },
+        {
+          text: "Converteer alle ingevoerde vragen naar het gevraagde JSON formaat voor ANS export. Sla geen enkele vraag over, verwerk ze allemaal systematisch van begin tot eind. Pas anti-testwiseness en de-duplicatie strikt toe."
         }
-    }
+      ]
+    };
+  }
 
-    const finishReason = response.candidates?.[0]?.finishReason;
-    if (finishReason && finishReason !== 'STOP') {
-        const errorMessage = `Image generation stopped unexpectedly. Reason: ${finishReason}. This often relates to safety settings.`;
-        throw new Error(errorMessage);
-    }
-    const textFeedback = response.text?.trim();
-    const errorMessage = `The AI model did not return an image. ` + (textFeedback ? `The model responded with text: "${textFeedback}"` : "This can happen due to safety filters or if the request is too complex. Please try a different image.");
-    throw new Error(errorMessage);
-};
-
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
-const model = 'gemini-2.5-flash-image';
-
-export const generateInitialDesign = async (roomImage: File, promptText: string): Promise<string> => {
-    const imagePart = await fileToPart(roomImage);
-    const prompt = `You are an expert AI interior designer. You will be given an image of a room and a design prompt. Your task is to completely redesign the room's style based on the prompt, while strictly preserving the original room's architectural structure, layout, windows, doors, and overall proportions. Do not alter the camera angle or perspective. The redesigned image must be photorealistic and seamlessly integrated.
-
-Design prompt: "${promptText}"
-
-Output ONLY the redesigned image.`;
-
+  try {
     const response = await ai.models.generateContent({
-        model,
-        contents: { parts: [imagePart, { text: prompt }] },
-        config: {
-            responseModalities: [Modality.IMAGE, Modality.TEXT],
-        },
+      model: model,
+      contents: contents,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              type: { type: Type.STRING, enum: [QuestionType.MC, QuestionType.ES] },
+              questionText: { type: Type.STRING },
+              correctAnswer: { type: Type.STRING },
+              distractors: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Exact 3 unieke afleiders die niet lijken op het juiste antwoord" },
+              correctFeedback: { type: Type.STRING },
+              modelAnswer: { type: Type.STRING },
+              topic: { type: Type.STRING },
+              bloom: { type: Type.STRING },
+              difficulty: { type: Type.STRING }
+            },
+            required: ["type", "questionText", "topic", "bloom", "difficulty"]
+          }
+        }
+      }
     });
-    return handleApiResponse(response);
-};
 
-export const applyDesignChange = async (currentImage: string, promptText: string): Promise<string> => {
-    const imagePart = dataUrlToPart(currentImage);
-    const prompt = `You are an expert AI interior designer. You will be given an image of a room and a design instruction. Your task is to modify the room based on the instruction, while strictly preserving all other aspects of the image, including the architectural structure, layout, and perspective. The change must be photorealistic and seamlessly integrated.
+    const text = response.text;
+    if (!text) throw new Error("No data returned from AI");
 
-Design instruction: "${promptText}"
-
-Output ONLY the modified image.`;
+    const data = JSON.parse(text);
     
-    const response = await ai.models.generateContent({
-        model,
-        contents: { parts: [imagePart, { text: prompt }] },
-        config: {
-            responseModalities: [Modality.IMAGE, Modality.TEXT],
-        },
-    });
-    return handleApiResponse(response);
+    return data.map((q: any, idx: number) => ({
+      ...q,
+      id: `Question ${String(idx + 1).padStart(2, '0')}`
+    }));
+
+  } catch (error) {
+    console.error("Gemini Conversion Error:", error);
+    throw new Error("Kon de vragen niet verwerken. Controleer de invoer of het bestand.");
+  }
 };
